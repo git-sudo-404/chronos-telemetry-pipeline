@@ -1,0 +1,68 @@
+
+syntax = "proto3";
+
+package vehicle.v1;
+
+// Adjusted namespace optimized for your Go workspace module paths
+option go_package = "github.com/git-sudo-404/chronos-telemetry-pipeline/services/telemetry-schemas/gen/go/vehicle/v1;vehiclev1";
+
+import "google/protobuf/timestamp.proto";
+
+// EventMetadata is passed at the top of every distinct payload to route streams uniformly
+message EventMetadata {
+  string event_id = 1;            // Unique UUIDv4 tracking identifier for message deduplication
+  string event_type = 2;          // Explicit string matching the topic: "GPS", "FUEL", "ENGINE", "BATTERY", "DIAGNOSTIC"
+  uint32 schema_version = 3;      
+  string source = 4;              // Origin device context (e.g., "OBD2-Dongle", "OEM-API")
+  google.protobuf.Timestamp timestamp = 5; // Chronological frame generation clock time from the vehicle
+  string entity_id = 6;           // The tracking identifier (VIN) used as the Kafka Partition Key
+  bool is_buffered = 7;           // Flagged true if recovered out of offline flash cache storage
+}
+
+message VehicleGpsEvent {
+  EventMetadata metadata = 1;
+  double latitude = 2;
+  double longitude = 3;
+  optional double altitude_m = 4;
+  double speed_kmh = 5;
+  double heading_dir = 6;
+  optional double gps_accuracy_m = 7;
+  optional double odometer_km = 8;
+  bool ignition_on = 9;           // Added to calculate precise asset idling analytics metrics
+}
+
+message VehicleFuelEvent {
+  EventMetadata metadata = 1;
+  double fuel_level_pct = 2;
+  optional double fuel_rate_lph = 3;
+  optional double fuel_consumed_total_l = 4;
+}
+
+message VehicleBatteryEvent {
+  EventMetadata metadata = 1;
+  double voltage_v = 2;
+  optional double current_a = 3;
+  optional double temperature_c = 4;
+  optional double state_of_charge_pct = 5;
+}
+
+message VehicleEngineTelemetryEvent {
+  EventMetadata metadata = 1;
+  double rpm = 2;
+  double coolant_temp_c = 3;
+  double engine_load_pct = 4;
+}
+
+enum DiagnosticSeverity {
+  DIAGNOSTIC_SEVERITY_UNSPECIFIED = 0;
+  DIAGNOSTIC_SEVERITY_INFO = 1;
+  DIAGNOSTIC_SEVERITY_WARNING = 2;
+  DIAGNOSTIC_SEVERITY_CRITICAL = 3;
+}
+
+message VehicleDiagnosticEvent {
+  EventMetadata metadata = 1;
+  string code = 2;
+  DiagnosticSeverity severity = 3;
+  string description = 4;
+}

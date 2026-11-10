@@ -1,0 +1,17 @@
+FROM golang:1.25.3-alpine AS build
+
+WORKDIR /src
+
+# Copy the local schema module because mock-generator's go.mod replaces it
+# with ../telemetry-schemas.
+COPY services/telemetry-schemas/go.mod services/telemetry-schemas/go.sum ./services/telemetry-schemas/
+COPY services/telemetry-schemas/gen/go/ ./services/telemetry-schemas/gen/go/
+COPY services/mock-generator/go.mod services/mock-generator/go.sum ./services/mock-generator/
+COPY services/mock-generator/ ./services/mock-generator/
+
+WORKDIR /src/services/mock-generator
+RUN GOWORK=off CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mock-generator .
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/mock-generator /mock-generator
+ENTRYPOINT ["/mock-generator"]
