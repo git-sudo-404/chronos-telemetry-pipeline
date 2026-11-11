@@ -1,30 +1,107 @@
-x-mock-generator: &mock-generator
-  build:
-    context: ../..
-    dockerfile: deployments/docker/Dockerfile.mock-generator
-  image: chronos-mock-generator:local
-  restart: unless-stopped
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
+version: '3.8'
 
 services:
-  mock-generator-1:
-    <<: *mock-generator
+  # 🚗 Simulator Node 01: Manages Vehicles 1 to 2,000
+  mock-generator-node1:
+    image: golang:1.21-alpine
+    container_name: chronos-mock-generator-01
+    volumes:
+      - ../../:/workspace
+    working_dir: /workspace/services/mock-generator
+    command: go run main.go
     environment:
-      GATEWAY_URL: "http://host.docker.internal:8080/api/v1/telemetry/ingest"
-      VEHICLE_START_ID: "1"
-      VEHICLE_END_ID: "1000"
+      - GATEWAY_URL=http://localhost:8080/api/v1/telemetry/ingest
+      - VEHICLE_START_ID=1
+      - VEHICLE_END_ID=2000
+      - GPS_FREQUENCY_SEC=1
+      - ENGINE_FREQUENCY_SEC=2
+      - FUEL_FREQUENCY_SEC=5
+      - BATTERY_FREQUENCY_SEC=5
+      - DIAGNOSTIC_FREQUENCY_SEC=10
+      - DEADZONE_PROBABILITY_PCT=10
+      - DEADZONE_DURATION_SEC=15
+    network_mode: "host" # Allows local containers to easily target an external/local port 8080 gateway instance
 
-  mock-generator-2:
-    <<: *mock-generator
+  # 🚗 Simulator Node 02: Manages Vehicles 2,001 to 4,000
+  mock-generator-node2:
+    image: golang:1.21-alpine
+    container_name: chronos-mock-generator-02
+    volumes:
+      - ../../:/workspace
+    working_dir: /workspace/services/mock-generator
+    command: go run main.go
     environment:
-      GATEWAY_URL: "http://host.docker.internal:8080/api/v1/telemetry/ingest"
-      VEHICLE_START_ID: "1001"
-      VEHICLE_END_ID: "2000"
+      - GATEWAY_URL=http://localhost:8080/api/v1/telemetry/ingest
+      - VEHICLE_START_ID=2001
+      - VEHICLE_END_ID=4000
+      - GPS_FREQUENCY_SEC=1
+      - ENGINE_FREQUENCY_SEC=2
+      - FUEL_FREQUENCY_SEC=5
+      - BATTERY_FREQUENCY_SEC=5
+      - DIAGNOSTIC_FREQUENCY_SEC=10
+      - DEADZONE_PROBABILITY_PCT=10
+      - DEADZONE_DURATION_SEC=15
+    network_mode: "host"
 
-  mock-generator-3:
-    <<: *mock-generator
+  # 🚗 Simulator Node 03: Manages Vehicles 4,001 to 6,000
+  mock-generator-node3:
+    image: golang:1.21-alpine
+    container_name: chronos-mock-generator-03
+    volumes:
+      - ../../:/workspace
+    working_dir: /workspace/services/mock-generator
+    command: go run main.go
     environment:
-      GATEWAY_URL: "http://host.docker.internal:8080/api/v1/telemetry/ingest"
-      VEHICLE_START_ID: "2001"
-      VEHICLE_END_ID: "3000"
+      - GATEWAY_URL=http://localhost:8080/api/v1/telemetry/ingest
+      - VEHICLE_START_ID=4001
+      - VEHICLE_END_ID=6000
+      - GPS_FREQUENCY_SEC=1
+      - ENGINE_FREQUENCY_SEC=2
+      - FUEL_FREQUENCY_SEC=5
+      - BATTERY_FREQUENCY_SEC=5
+      - DIAGNOSTIC_FREQUENCY_SEC=10
+      - DEADZONE_PROBABILITY_PCT=10
+      - DEADZONE_DURATION_SEC=15
+    network_mode: "host"
+
+  # 🚗 Simulator Node 04: Manages Vehicles 6,001 to 8,000
+  mock-generator-node4:
+    image: golang:1.21-alpine
+    container_name: chronos-mock-generator-04
+    volumes:
+      - ../../:/workspace
+    working_dir: /workspace/services/mock-generator
+    command: go run main.go
+    environment:
+      - GATEWAY_URL=http://localhost:8080/api/v1/telemetry/ingest
+      - VEHICLE_START_ID=6001
+      - VEHICLE_END_ID=8000
+      - GPS_FREQUENCY_SEC=1
+      - ENGINE_FREQUENCY_SEC=2
+      - FUEL_FREQUENCY_SEC=5
+      - BATTERY_FREQUENCY_SEC=5
+      - DIAGNOSTIC_FREQUENCY_SEC=10
+      - DEADZONE_PROBABILITY_PCT=10
+      - DEADZONE_DURATION_SEC=15
+    network_mode: "host"
+
+  # 🚗 Simulator Node 05: Manages Vehicles 8,001 to 10,000
+  mock-generator-node5:
+    image: golang:1.21-alpine
+    container_name: chronos-mock-generator-05
+    volumes:
+      - ../../:/workspace
+    working_dir: /workspace/services/mock-generator
+    command: go run main.go
+    environment:
+      - GATEWAY_URL=http://localhost:8080/api/v1/telemetry/ingest
+      - VEHICLE_START_ID=8001
+      - VEHICLE_END_ID=10000
+      - GPS_FREQUENCY_SEC=1
+      - ENGINE_FREQUENCY_SEC=2
+      - FUEL_FREQUENCY_SEC=5
+      - BATTERY_FREQUENCY_SEC=5
+      - DIAGNOSTIC_FREQUENCY_SEC=10
+      - DEADZONE_PROBABILITY_PCT=10
+      - DEADZONE_DURATION_SEC=15
+    network_mode: "host"

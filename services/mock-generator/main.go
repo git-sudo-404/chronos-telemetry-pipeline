@@ -2,45 +2,151 @@ package main
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/binary"
+	"errors"
 	"fmt"
+	"hash/fnv"
 	"log"
+	"math/rand"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/git-sudo-404/chronos-telemetry-pipeline/services/mock-generator/config"
 	"github.com/git-sudo-404/chronos-telemetry-pipeline/services/mock-generator/internal/network"
 	"github.com/git-sudo-404/chronos-telemetry-pipeline/services/mock-generator/internal/simulator"
+	"github.com/git-sudo-404/chronos-telemetry-pipeline/services/mock-generator/internal/telemetry"
 )
 
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("load simulator config: %v", err)
+	cfg := config.NewConfig()
+	cfg.ParseConfig()
+
+	shardCount := cfg.StateWorkerCount
+	if shardCount <= 0 {
+		shardCount = runtime.NumCPU()
+	}
+	if shardCount < 1 {
+		shardCount = 1
+	}
+	workerCount := cfg.HTTPWorkerCount
+	if workerCount <= 0 {
+		workerCount = runtime.NumCPU() * 4
+	}
+	queueCapacity := cfg.EventQueueSize
+	if queueCapacity <= 0 {
+		queueCapacity = 10000
+	}
+
+	channels := make([]chan telemetry.ImmutableSnapshot, shardCount)
+	shards := make([]*simulator.ShardWorker, shardCount)
+	for i := 0; i < shardCount; i++ {
+		channels[i] = make(chan telemetry.ImmutableSnapshot, queueCapacity)
+		shards[i] = simulator.NewShardWorker(i, channels[i])
+	}
+
+	assignments := make([][]*telemetry.VehicleState, shardCount)
+	for vehicleID := cfg.VehicleStartID; vehicleID <= cfg.VehicleEndID; vehicleID++ {
+		vin := fmt.Sprintf("VIN-MOCK-%08d", vehicleID)
+		state, err := newVehicleState(vin, cfg)
+		if err != nil {
+			log.Fatalf("initialize vehicle %s: %v", vin, err)
+		}
+		shardIndex := stableShardIndex(vin, shardCount)
+		assignments[shardIndex] = append(assignments[shardIndex], state)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	taskChan := make(chan network.TelemetryTask, 50000)
-	workerDone := network.StartWorkerPool(context.Background(), taskChan, 100, cfg.GatewayURL)
+	senderDone := network.StartSenderPool(ctx, channels, workerCount, cfg.GatewayURL)
 
-	var actors sync.WaitGroup
-	for id := cfg.VehicleStartID; ; id++ {
-		vin := fmt.Sprintf("VIN-MOCK-%08d", id)
-		actors.Add(1)
-		go func() {
-			defer actors.Done()
-			simulator.StartVehicleActor(ctx, vin, taskChan, &cfg)
-		}()
-		if id == cfg.VehicleEndID {
-			break
+	var shardWG sync.WaitGroup
+	for _, shard := range shards {
+		shardWG.Add(1)
+		go func(shard *simulator.ShardWorker) {
+			defer shardWG.Done()
+			if err := shard.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("shard %d stopped with error: %v", shard.ShardID, err)
+			}
+		}(shard)
+	}
+	for shardIndex, states := range assignments {
+		for _, state := range states {
+			if err := shards[shardIndex].AddVehicle(ctx, state); err != nil {
+				log.Printf("assign vehicle %s to shard %d: %v", state.VIN, shardIndex, err)
+				stop()
+				shardWG.Wait()
+				for _, channel := range channels {
+					close(channel)
+				}
+				<-senderDone
+				return
+			}
 		}
 	}
-	log.Printf("mock generator started vehicles=%d-%d gateway=%s", cfg.VehicleStartID, cfg.VehicleEndID, cfg.GatewayURL)
 
+	log.Printf("node successfully bootstrapping distributed vehicle range %d to %d across %d sharded scheduling threads targeting gateway %s",
+		cfg.VehicleStartID, cfg.VehicleEndID, shardCount, cfg.GatewayURL)
 	<-ctx.Done()
-	actors.Wait()
-	close(taskChan)
-	<-workerDone
-	log.Print("mock generator stopped")
+	stop()
+
+	shardWG.Wait()
+	for _, channel := range channels {
+		close(channel)
+	}
+	<-senderDone
+	log.Printf("mock generator stopped after draining sender queues")
+}
+
+func newVehicleState(vin string, cfg *config.Config) (*telemetry.VehicleState, error) {
+	var seedBytes [8]byte
+	if _, err := cryptorand.Read(seedBytes[:]); err != nil {
+		return nil, fmt.Errorf("generate random seed: %w", err)
+	}
+	seed := int64(binary.LittleEndian.Uint64(seedBytes[:]))
+	rng := rand.New(rand.NewSource(seed))
+	state := &telemetry.VehicleState{
+		VIN:                 vin,
+		SequenceNumber:      0,
+		NextEventTimes:      make(map[telemetry.TelemetryEventType]time.Time),
+		EventIntervals:      make(map[telemetry.TelemetryEventType]time.Duration),
+		SeededRand:          rng,
+		SchemaVersion:       1,
+		Source:              "mock-generator",
+		IgnitionOn:          true,
+		Latitude:            -60 + rng.Float64()*120,
+		Longitude:           -180 + rng.Float64()*360,
+		SpeedKmh:            20 + rng.Float64()*90,
+		HeadingDir:          rng.Float64() * 360,
+		FuelLevelPct:        30 + rng.Float64()*70,
+		VoltageV:            14.1,
+		CurrentA:            floatPointer(10),
+		TemperatureC:        floatPointer(30),
+		StateOfChargePct:    floatPointer(75),
+		OdometerKm:          floatPointer(rng.Float64() * 200000),
+		FuelConsumedTotalL:  floatPointer(rng.Float64() * 10000),
+		CoolantTempC:        80 + rng.Float64()*10,
+		DriftProbabilityPct: cfg.DriftProbabilityPct,
+		DriftDurationSec:    cfg.DriftDurationSec,
+		MaxBufferSize:       1000,
+	}
+	state.EventIntervals[telemetry.TypeGPS] = time.Duration(cfg.GpsFreqSec) * time.Second
+	state.EventIntervals[telemetry.TypeEngine] = time.Duration(cfg.EngineFreqSec) * time.Second
+	state.EventIntervals[telemetry.TypeFuel] = time.Duration(cfg.FuelFreqSec) * time.Second
+	state.EventIntervals[telemetry.TypeBattery] = time.Duration(cfg.BatteryFreqSec) * time.Second
+	state.EventIntervals[telemetry.TypeDiagnostic] = time.Duration(cfg.DiagnosticFreqSec) * time.Second
+	return state, nil
+}
+
+func stableShardIndex(vin string, shardCount int) int {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(vin))
+	return int(h.Sum64() % uint64(shardCount))
+}
+
+func floatPointer(value float64) *float64 {
+	return &value
 }
