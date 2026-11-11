@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
@@ -38,12 +38,12 @@ func StartSenderPool(
 ) <-chan struct{} {
 	done := make(chan struct{})
 	if workerCount < 1 {
-		log.Printf("sender pool: worker count must be positive, got %d", workerCount)
+		slog.Error("invalid sender worker count", slog.Int("worker_count", workerCount))
 		close(done)
 		return done
 	}
 	if gatewayURL == "" {
-		log.Printf("sender pool: gateway URL is empty")
+		slog.Error("gateway URL is empty")
 		close(done)
 		return done
 	}
@@ -75,8 +75,20 @@ func StartSenderPool(
 			defer workers.Done()
 			for snapshot := range fanIn {
 				if err := sendSnapshot(context.Background(), gatewayURL, snapshot); err != nil {
-					log.Printf("sender worker %d: failed to send event_id=%s vehicle_id=%s event_type=%s: %v",
-						id, snapshot.EventID, snapshot.VehicleID, snapshot.EventType, err)
+					status := 0
+					var statusErr *httpStatusError
+					if errors.As(err, &statusErr) {
+						status = statusErr.statusCode
+					}
+					eventType, _ := eventTypeString(snapshot.EventType)
+					slog.Error("gateway request failed",
+						slog.Int("worker_id", id),
+						slog.String("vehicle_id", snapshot.VehicleID),
+						slog.String("event_type", eventType),
+						slog.Int("http_status", status),
+						slog.String("error_message", err.Error()),
+						slog.Int("retry_attempt", 0),
+					)
 				}
 			}
 		}(workerID)
@@ -121,7 +133,7 @@ func sendSnapshot(ctx context.Context, gatewayURL string, snapshot telemetry.Imm
 		return err
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return &httpStatusError{status: response.Status}
+		return &httpStatusError{status: response.Status, statusCode: response.StatusCode}
 	}
 	return nil
 }
@@ -202,7 +214,8 @@ func eventTypeString(eventType telemetry.TelemetryEventType) (string, bool) {
 }
 
 type httpStatusError struct {
-	status string
+	status     string
+	statusCode int
 }
 
 func (e *httpStatusError) Error() string { return "gateway returned " + e.status }

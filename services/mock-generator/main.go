@@ -7,8 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"log"
+	"log/slog"
 	"math/rand"
+	"os"
 	"os/signal"
 	"runtime"
 	"sync"
@@ -22,6 +23,7 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	cfg := config.NewConfig()
 	cfg.ParseConfig()
 
@@ -53,7 +55,8 @@ func main() {
 		vin := fmt.Sprintf("VIN-MOCK-%08d", vehicleID)
 		state, err := newVehicleState(vin, cfg)
 		if err != nil {
-			log.Fatalf("initialize vehicle %s: %v", vin, err)
+			slog.Error("vehicle initialization failed", slog.String("vehicle_id", vin), slog.Any("error", err))
+			os.Exit(1)
 		}
 		shardIndex := stableShardIndex(vin, shardCount)
 		assignments[shardIndex] = append(assignments[shardIndex], state)
@@ -69,14 +72,14 @@ func main() {
 		go func(shard *simulator.ShardWorker) {
 			defer shardWG.Done()
 			if err := shard.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				log.Printf("shard %d stopped with error: %v", shard.ShardID, err)
+				slog.Error("shard stopped with error", slog.Int("shard_id", shard.ShardID), slog.Any("error", err))
 			}
 		}(shard)
 	}
 	for shardIndex, states := range assignments {
 		for _, state := range states {
 			if err := shards[shardIndex].AddVehicle(ctx, state); err != nil {
-				log.Printf("assign vehicle %s to shard %d: %v", state.VIN, shardIndex, err)
+				slog.Error("vehicle assignment failed", slog.String("vehicle_id", state.VIN), slog.Int("shard_id", shardIndex), slog.Any("error", err))
 				stop()
 				shardWG.Wait()
 				for _, channel := range channels {
@@ -88,8 +91,17 @@ func main() {
 		}
 	}
 
-	log.Printf("node successfully bootstrapping distributed vehicle range %d to %d across %d sharded scheduling threads targeting gateway %s",
-		cfg.VehicleStartID, cfg.VehicleEndID, shardCount, cfg.GatewayURL)
+	nodeID, err := os.Hostname()
+	if err != nil || nodeID == "" {
+		nodeID = "unknown"
+	}
+	slog.Info("mock generator started",
+		slog.String("node_id", nodeID),
+		slog.Int("vehicle_start_id", cfg.VehicleStartID),
+		slog.Int("vehicle_end_id", cfg.VehicleEndID),
+		slog.Int("shard_count", shardCount),
+		slog.Int("sender_workers", workerCount),
+	)
 	<-ctx.Done()
 	stop()
 
@@ -98,7 +110,7 @@ func main() {
 		close(channel)
 	}
 	<-senderDone
-	log.Printf("mock generator stopped after draining sender queues")
+	slog.Info("mock generator stopped after draining sender queues", slog.String("node_id", nodeID))
 }
 
 func newVehicleState(vin string, cfg *config.Config) (*telemetry.VehicleState, error) {
