@@ -4,7 +4,7 @@ import (
 	"container/heap"
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/git-sudo-404/chronos-telemetry-pipeline/services/mock-generator/internal/telemetry"
@@ -209,7 +209,15 @@ func (s *ShardWorker) applyCommand(ctx context.Context, command shardCommand) er
 	}
 	if command.offline != nil {
 		if vehicle := s.Vehicles[command.offline.vehicleID]; vehicle != nil {
+			wasOffline := vehicle.IsOffline
 			vehicle.IsOffline = command.offline.value
+			if !wasOffline && vehicle.IsOffline {
+				slog.Info("vehicle entered cellular dead zone",
+					slog.Int("shard_id", s.ShardID),
+					slog.String("vehicle_id", vehicle.VIN),
+					slog.String("event", "deadzone_entered"),
+				)
+			}
 		}
 		return nil
 	}
@@ -277,11 +285,17 @@ func (s *ShardWorker) appendOfflineSnapshot(vehicle *telemetry.VehicleState, sna
 		vehicle.MaxBufferSize = 1000
 	}
 	if len(vehicle.OfflineBuffer) >= vehicle.MaxBufferSize {
+		dropped := vehicle.OfflineBuffer[0].SequenceNumber
 		copy(vehicle.OfflineBuffer, vehicle.OfflineBuffer[1:])
 		vehicle.OfflineBuffer[len(vehicle.OfflineBuffer)-1] = telemetry.ImmutableSnapshot{}
 		vehicle.OfflineBuffer = vehicle.OfflineBuffer[:len(vehicle.OfflineBuffer)-1]
-		log.Printf("metric=offline_buffer_dropped_total severity=warning shard_id=%d vehicle_id=%s reason=capacity_limit",
-			s.ShardID, vehicle.VIN)
+		slog.Warn("offline buffer capacity reached; oldest snapshot dropped",
+			slog.Int("shard_id", s.ShardID),
+			slog.String("vehicle_id", vehicle.VIN),
+			slog.Int("buffer_cap", vehicle.MaxBufferSize),
+			slog.Uint64("dropped_sequence_number", dropped),
+			slog.String("error", "buffer_overflow_packet_dropped"),
+		)
 	}
 	vehicle.OfflineBuffer = append(vehicle.OfflineBuffer, snapshot)
 }
@@ -292,6 +306,8 @@ func (s *ShardWorker) replay(ctx context.Context, vehicleID string) error {
 		return nil
 	}
 	vehicle.IsOffline = false
+	replayStarted := time.Now()
+	replayedCount := len(vehicle.OfflineBuffer)
 	for i := range vehicle.OfflineBuffer {
 		snapshot := vehicle.OfflineBuffer[i]
 		snapshot.IsBuffered = true
@@ -301,6 +317,12 @@ func (s *ShardWorker) replay(ctx context.Context, vehicleID string) error {
 		vehicle.OfflineBuffer[i] = telemetry.ImmutableSnapshot{}
 	}
 	vehicle.OfflineBuffer = nil
+	slog.Info("dead zone replay flushed",
+		slog.String("vehicle_id", vehicleID),
+		slog.Int("replayed_snapshots_count", replayedCount),
+		slog.Int64("duration_ms", time.Since(replayStarted).Milliseconds()),
+		slog.String("event", "deadzone_replay_flushed"),
+	)
 	return nil
 }
 

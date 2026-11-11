@@ -25,7 +25,7 @@
 package config
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"runtime"
 	"strconv"
@@ -77,20 +77,20 @@ func getEnv(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value
 	}
-	log.Printf("[LOG] ENV VARIABLE MISSING, USING FALLBACK : %s missing, using %s instead", key, fallback)
+	slog.Warn("environment variable missing, using fallback", slog.String("variable", key), slog.String("fallback_value", fallback))
 	return fallback
 }
 
 func getEnvAsInt(key string, fallback int) int {
 	value, ok := os.LookupEnv(key)
 	if !ok {
-		log.Printf("[LOG] ENV VARIABLE MISSING, USING FALLBACK : %s missing, using %d instead", key, fallback)
+		slog.Warn("environment variable missing, using fallback", slog.String("variable", key), slog.Int("fallback_value", fallback))
 		return fallback
 	}
 
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
-		log.Printf("warning: invalid integer value for %s=%q; using default %d: %v", key, value, fallback, err)
+		slog.Warn("invalid integer environment value; using fallback", slog.String("variable", key), slog.String("value", value), slog.Int("fallback_value", fallback), slog.Any("error", err))
 		return fallback
 	}
 	return parsed
