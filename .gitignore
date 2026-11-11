@@ -27,6 +27,7 @@ go.work.sum
 
 # env file
 .env
+!services/mock-generator/example.env
 
 # Editor/IDE
 # .idea/

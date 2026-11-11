@@ -1,0 +1,52 @@
+x-generator-environment: &generator-environment
+  GATEWAY_URL: http://localhost:8080/api/v1/telemetry/ingest
+  GPS_FREQ_SEC: "1"
+  ENGINE_FREQ_SEC: "2"
+  FUEL_FREQ_SEC: "5"
+  BATTERY_FREQ_SEC: "5"
+  DIAGNOSTIC_FREQ_SEC: "10"
+  DEADZONE_PROBABILITY_PCT: "10"
+  DEADZONE_DURATION_SEC: "15"
+
+x-generator-base: &generator-base
+  image: chronos/mock-generator:latest
+  build:
+    context: ../..
+    dockerfile: services/mock-generator/Dockerfile
+  network_mode: "host"
+
+services:
+  mock-generator-01:
+    <<: *generator-base
+    environment:
+      <<: *generator-environment
+      VEHICLE_START_ID: "1"
+      VEHICLE_END_ID: "2000"
+
+  mock-generator-02:
+    <<: *generator-base
+    environment:
+      <<: *generator-environment
+      VEHICLE_START_ID: "2001"
+      VEHICLE_END_ID: "4000"
+
+  mock-generator-03:
+    <<: *generator-base
+    environment:
+      <<: *generator-environment
+      VEHICLE_START_ID: "4001"
+      VEHICLE_END_ID: "6000"
+
+  mock-generator-04:
+    <<: *generator-base
+    environment:
+      <<: *generator-environment
+      VEHICLE_START_ID: "6001"
+      VEHICLE_END_ID: "8000"
+
+  mock-generator-05:
+    <<: *generator-base
+    environment:
+      <<: *generator-environment
+      VEHICLE_START_ID: "8001"
+      VEHICLE_END_ID: "10000"

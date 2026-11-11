@@ -1,88 +1,97 @@
-// Package config loads the simulator's fleet profile from environment variables.
+/*
+ * MIT License
+ *
+ * Copyright (c) 2026 git-sudo-404
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * Of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * Copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * Copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 package config
 
 import (
-	"fmt"
-	"net/url"
+	"log"
 	"os"
+	"runtime"
 	"strconv"
-	"strings"
 )
 
-// SimulatorConfig is a value snapshot of the simulator process environment.
-type SimulatorConfig struct {
+type Config struct {
 	GatewayURL             string
 	VehicleStartID         int
 	VehicleEndID           int
-	GpsFrequencySec        int
-	EngineFrequencySec     int
-	FuelFrequencySec       int
-	BatteryFrequencySec    int
-	DiagnosticFrequencySec int
+	GpsFreqSec             int
+	EngineFreqSec          int
+	FuelFreqSec            int
+	BatteryFreqSec         int
+	DiagnosticFreqSec      int
 	DeadzoneProbabilityPct int
 	DeadzoneDurationSec    int
+	DriftProbabilityPct    int
+	DriftDurationSec       int
+	TargetEventsPerSec     int
+	StateWorkerCount       int
+	HTTPWorkerCount        int
+	EventQueueSize         int
 }
 
-// Load reads and validates a configuration snapshot exclusively from env vars.
-func Load() (SimulatorConfig, error) {
-	cfg := SimulatorConfig{GatewayURL: envOrDefault("GATEWAY_URL", "http://localhost:8080/api/v1/telemetry/ingest")}
-	values := []struct {
-		key string
-		dst *int
-		def int
-	}{
-		{"VEHICLE_START_ID", &cfg.VehicleStartID, 1},
-		{"VEHICLE_END_ID", &cfg.VehicleEndID, 1000},
-		{"GPS_FREQUENCY_SEC", &cfg.GpsFrequencySec, 2},
-		{"ENGINE_FREQUENCY_SEC", &cfg.EngineFrequencySec, 5},
-		{"FUEL_FREQUENCY_SEC", &cfg.FuelFrequencySec, 10},
-		{"BATTERY_FREQUENCY_SEC", &cfg.BatteryFrequencySec, 10},
-		{"DIAGNOSTIC_FREQUENCY_SEC", &cfg.DiagnosticFrequencySec, 30},
-		{"DEADZONE_PROBABILITY_PCT", &cfg.DeadzoneProbabilityPct, 10},
-		{"DEADZONE_DURATION_SEC", &cfg.DeadzoneDurationSec, 15},
-	}
-	for _, item := range values {
-		value, err := intEnv(item.key, item.def)
-		if err != nil {
-			return SimulatorConfig{}, err
-		}
-		*item.dst = value
-	}
-
-	gateway, err := url.ParseRequestURI(cfg.GatewayURL)
-	if err != nil || gateway.Scheme == "" || gateway.Host == "" {
-		return SimulatorConfig{}, fmt.Errorf("GATEWAY_URL must be an absolute URL")
-	}
-	if cfg.VehicleStartID < 0 || cfg.VehicleEndID < cfg.VehicleStartID {
-		return SimulatorConfig{}, fmt.Errorf("VEHICLE_END_ID must be greater than or equal to non-negative VEHICLE_START_ID")
-	}
-	if cfg.GpsFrequencySec < 1 || cfg.EngineFrequencySec < 1 || cfg.FuelFrequencySec < 1 || cfg.BatteryFrequencySec < 1 || cfg.DiagnosticFrequencySec < 1 {
-		return SimulatorConfig{}, fmt.Errorf("all event frequencies must be at least 1 second")
-	}
-	if cfg.DeadzoneProbabilityPct < 0 || cfg.DeadzoneProbabilityPct > 100 {
-		return SimulatorConfig{}, fmt.Errorf("DEADZONE_PROBABILITY_PCT must be between 0 and 100")
-	}
-	if cfg.DeadzoneDurationSec < 1 {
-		return SimulatorConfig{}, fmt.Errorf("DEADZONE_DURATION_SEC must be at least 1")
-	}
-	return cfg, nil
+func NewConfig() *Config {
+	return &Config{}
 }
 
-func intEnv(key string, fallback int) (int, error) {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
-	}
-	return parsed, nil
+func (c *Config) ParseConfig() {
+	c.GatewayURL = getEnv("GATEWAY_URL", "http://localhost:8080/api/v1/telemetry/ingest")
+	c.VehicleStartID = getEnvAsInt("VEHICLE_START_ID", 1)
+	c.VehicleEndID = getEnvAsInt("VEHICLE_END_ID", 1000)
+	c.GpsFreqSec = getEnvAsInt("GPS_FREQ_SEC", 2)
+	c.EngineFreqSec = getEnvAsInt("ENGINE_FREQ_SEC", 5)
+	c.FuelFreqSec = getEnvAsInt("FUEL_FREQ_SEC", 10)
+	c.BatteryFreqSec = getEnvAsInt("BATTERY_FREQ_SEC", 10)
+	c.DiagnosticFreqSec = getEnvAsInt("DIAGNOSTIC_FREQ_SEC", 30)
+	c.DeadzoneProbabilityPct = getEnvAsInt("DEADZONE_PROBABILITY_PCT", 10)
+	c.DeadzoneDurationSec = getEnvAsInt("DEADZONE_DURATION_SEC", 15)
+	c.DriftProbabilityPct = getEnvAsInt("DRIFT_PROBABILITY_PCT", 5)
+	c.DriftDurationSec = getEnvAsInt("DRIFT_DURATION_SEC", 3)
+	c.TargetEventsPerSec = getEnvAsInt("TARGET_EVENTS_PER_SEC", 2000)
+	c.StateWorkerCount = getEnvAsInt("STATE_WORKER_COUNT", runtime.NumCPU())
+	c.HTTPWorkerCount = getEnvAsInt("HTTP_WORKER_COUNT", runtime.NumCPU()*4)
+	c.EventQueueSize = getEnvAsInt("EVENT_QUEUE_SIZE", 10000)
 }
 
-func envOrDefault(key, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
 		return value
 	}
+	log.Printf("[LOG] ENV VARIABLE MISSING, USING FALLBACK : %s missing, using %s instead", key, fallback)
 	return fallback
+}
+
+func getEnvAsInt(key string, fallback int) int {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		log.Printf("[LOG] ENV VARIABLE MISSING, USING FALLBACK : %s missing, using %d instead", key, fallback)
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		log.Printf("warning: invalid integer value for %s=%q; using default %d: %v", key, value, fallback, err)
+		return fallback
+	}
+	return parsed
 }
